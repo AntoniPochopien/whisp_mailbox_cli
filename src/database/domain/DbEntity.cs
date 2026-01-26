@@ -1,7 +1,7 @@
 class DbEntity<T>
 {
-    int Id { get; }
-    T Entity { get; }
+    public int Id { get; }
+    public T Entity { get; }
 
     public DbEntity(int id, T entity)
     {

@@ -1,8 +1,8 @@
 class Mailbox
 {
-    int Id { get; }
-    string Name { get; }
-    string PINhash { get; }
+    public int Id { get; }
+    public string Name { get; }
+    public string PINhash { get; }
 
     public Mailbox(int id, string name, string PINhash)
     {
