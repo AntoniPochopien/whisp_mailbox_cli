@@ -1,8 +1,7 @@
 ﻿using Spectre.Console.Cli;
-using Microsoft.Extensions.DependencyInjection;
 
-var services = new ServiceCollection();
-services.AddSingleton<MailboxUseCase>();
+var services = Services.ConfigureServices();
+Services.InitializeGlobalServices(services);
 
 var registrar = new TypeRegistrar(services);
 var app = new CommandApp(registrar);
