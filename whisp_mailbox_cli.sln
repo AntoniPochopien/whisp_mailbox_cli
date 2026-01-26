@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "whisp_mailbox_cli", "whisp_mailbox_cli.csproj", "{CA1BB4B4-F5A9-07CC-0FC1-78515E3F18DB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{CA1BB4B4-F5A9-07CC-0FC1-78515E3F18DB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CA1BB4B4-F5A9-07CC-0FC1-78515E3F18DB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CA1BB4B4-F5A9-07CC-0FC1-78515E3F18DB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CA1BB4B4-F5A9-07CC-0FC1-78515E3F18DB}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {441154D1-1944-4A31-BD2E-2CACEE29E07D}
+	EndGlobalSection
+EndGlobal
