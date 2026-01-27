@@ -1,4 +1,4 @@
-abstract class IDatabaseRepository
+public abstract class IDatabaseRepository
 {
     abstract public void InitializeDatabase();
     abstract public DbEntity<Mailbox> GetMailbox(int id);

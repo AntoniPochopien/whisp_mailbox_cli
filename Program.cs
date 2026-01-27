@@ -12,6 +12,8 @@ app.Configure(config =>
      {
          mailbox.AddCommand<MailboxStartCommand>("start")
                 .WithDescription("Start mailbox");
+         mailbox.AddCommand<MailboxListCommand>("list")
+                .WithDescription("List all mailboxes");
      });
 });
 

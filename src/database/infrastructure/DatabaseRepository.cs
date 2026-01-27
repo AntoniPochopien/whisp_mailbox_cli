@@ -1,6 +1,6 @@
 using Microsoft.Data.Sqlite;
 
-class DatabaseRepository : IDatabaseRepository
+public class DatabaseRepository : IDatabaseRepository
 {
     private const string _ConnectionString = "Data Source=whisp_mailbox.db";
     private SqliteConnection _Connection = null!;
@@ -38,7 +38,25 @@ class DatabaseRepository : IDatabaseRepository
 
     public override List<DbEntity<Mailbox>> GetAllMailboxes()
     {
-        throw new NotImplementedException();
+        var mailboxes = new List<DbEntity<Mailbox>>();
+        
+        var selectCommand = _Connection.CreateCommand();
+        selectCommand.CommandText = "SELECT id, name, pinhash FROM mailboxes";
+        
+        using (var reader = selectCommand.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var id = reader.GetInt32(0);
+                var name = reader.GetString(1);
+                var pinhash = reader.GetString(2);
+                
+                var mailbox = new Mailbox(id, name, pinhash);
+                mailboxes.Add(new DbEntity<Mailbox>(id, mailbox));
+            }
+        }
+        
+        return mailboxes;
     }
 
     public override DbEntity<Mailbox> GetMailbox(int id)

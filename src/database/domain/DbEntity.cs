@@ -1,4 +1,4 @@
-class DbEntity<T>
+public class DbEntity<T>
 {
     public int Id { get; }
     public T Entity { get; }
