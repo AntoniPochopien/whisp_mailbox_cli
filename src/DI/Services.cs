@@ -9,6 +9,7 @@ class Services
         services.AddSingleton<IDatabaseRepository, DatabaseRepository>();
         services.AddTransient<ITorRepository, TorRepository>();
         services.AddSingleton<ITorManager, TorManager>();
+        services.AddSingleton<IMailboxListener, MailboxListener>();
         return services;
     }
 

@@ -3,6 +3,7 @@ using Spectre.Console.Cli;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using QRCoder;
 
 public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
@@ -10,21 +11,31 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
     private readonly IDatabaseRepository _databaseRepository;
     private readonly ITorRepository _torRepository;
     private readonly ITorManager _torManager;
+    private readonly IMailboxListener _mailboxListener;
 
-    public MailboxStartCommand(IDatabaseRepository databaseRepository, ITorRepository torRepository, ITorManager torManager)
+    public MailboxStartCommand(
+        IDatabaseRepository databaseRepository, 
+        ITorRepository torRepository, 
+        ITorManager torManager,
+        IMailboxListener mailboxListener)
     {
         _databaseRepository = databaseRepository;
         _torRepository = torRepository;
         _torManager = torManager;
+        _mailboxListener = mailboxListener;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, MailboxStartSettings settings, CancellationToken cancellationToken)
     {
-        // Default behavior: run as daemon (background). Only run in foreground if explicitly requested.
-        if (!settings.Foreground && !settings.Background)
+        // Force foreground mode for debugging - always run in foreground to see events live
+        // Only run in background if explicitly requested with --background flag
+        if (settings.Background)
         {
             return await StartAsDaemonAsync(settings, cancellationToken);
         }
+        
+        // Always run in foreground mode (default behavior for debugging)
+        settings.Foreground = true;
 
         var mailboxEntity = _databaseRepository.GetMailboxByName(settings.Name);
         
@@ -196,13 +207,25 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                 await WritePidFileAsync(settings.Name);
             }
 
-            // Start a simple listener to keep the service running
-            using var listener = new TcpListener(IPAddress.Loopback, localPort);
-            listener.Start();
+            // Start HTTP listener service
+            try
+            {
+                await _mailboxListener.StartAsync(localPort, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                if (!settings.Background)
+                {
+                    AnsiConsole.MarkupLine($"[red]Failed to start HTTP listener: {ex.Message}[/]");
+                }
+                throw;
+            }
             
             if (!settings.Background)
             {
                 AnsiConsole.MarkupLine($"[green]✓ Mailbox '[white]{mailbox.Name}[/]' is now online[/]");
+                AnsiConsole.MarkupLine($"[dim]Listening on http://localhost:{localPort}/ (Tor will forward from {onionAddress})[/]");
+                AnsiConsole.MarkupLine($"[yellow]Waiting for incoming requests...[/]");
             }
 
             // Keep running until cancelled (use linked token for Ctrl+C support)
@@ -219,23 +242,16 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
 
             try
             {
-                while (!cts.Token.IsCancellationRequested)
-                {
-                    // Accept incoming connections
-                    if (listener.Pending())
-                    {
-                        var client = await listener.AcceptTcpClientAsync(cts.Token);
-                        if (!settings.Background)
-                            AnsiConsole.MarkupLine($"[cyan]→ Incoming connection[/]");
-                        // For now, just close the connection - you can add message handling here
-                        client.Close();
-                    }
-                    await Task.Delay(100, cts.Token);
-                }
+                // Wait until cancellation is requested
+                await Task.Delay(Timeout.Infinite, cts.Token);
             }
             catch (OperationCanceledException)
             {
                 // Normal shutdown
+            }
+            finally
+            {
+                await _mailboxListener.StopAsync(cts.Token);
             }
 
             if (!settings.Background)
@@ -347,7 +363,7 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                 if (mailboxEntity != null && mailboxEntity.Entity.HasHiddenService)
                 {
                     var onionAddress = mailboxEntity.Entity.FullOnionAddress;
-                    if (!string.IsNullOrEmpty(onionAddress))
+                    if (onionAddress != null && !string.IsNullOrEmpty(onionAddress))
                     {
                         AnsiConsole.WriteLine();
                         var panel = new Panel($"[bold cyan]{onionAddress}[/]")
@@ -440,4 +456,5 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
             AnsiConsole.MarkupLine($"[dim]Could not generate QR code: {ex.Message}[/]");
         }
     }
+
 }
