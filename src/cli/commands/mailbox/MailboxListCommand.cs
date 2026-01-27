@@ -1,6 +1,5 @@
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.ComponentModel;
 
 public class MailboxListCommand : Command<MailboxSettings>
 {
@@ -9,13 +8,6 @@ public class MailboxListCommand : Command<MailboxSettings>
     public MailboxListCommand(IDatabaseRepository databaseRepository)
     {
         _databaseRepository = databaseRepository;
-    }
-
-    public class Settings : CommandSettings
-    {
-        [Description("Mailbox name")]
-        [CommandArgument(0, "<name>")]
-        public string Name { get; set; } = "";
     }
 
     public override int Execute(CommandContext context, MailboxSettings settings, CancellationToken cancellationToken)
@@ -31,15 +23,26 @@ public class MailboxListCommand : Command<MailboxSettings>
         var table = new Table();
         table.AddColumn("ID");
         table.AddColumn("Name");
+        table.AddColumn("Onion Address");
         table.AddColumn("Status");
+        table.Border(TableBorder.Rounded);
 
         foreach (var mailboxEntity in mailboxes)
         {
             var mailbox = mailboxEntity.Entity;
+            var onionDisplay = mailbox.HasHiddenService
+                ? $"[cyan]{mailbox.FullOnionAddress}[/]"
+                : "[dim]Not configured[/]";
+            
+            var statusDisplay = mailbox.Status == MailboxStatus.Online
+                ? "[green]Online[/]"
+                : "[dim]Offline[/]";
+
             table.AddRow(
                 mailboxEntity.Id.ToString(),
                 mailbox.Name,
-                mailbox.Status.ToString()
+                onionDisplay,
+                statusDisplay
             );
         }
 

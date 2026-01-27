@@ -7,6 +7,8 @@ class Services
         var services = new ServiceCollection();
         services.AddSingleton<MailboxUseCase>();
         services.AddSingleton<IDatabaseRepository, DatabaseRepository>();
+        services.AddTransient<ITorRepository, TorRepository>();
+        services.AddSingleton<ITorManager, TorManager>();
         return services;
     }
 
