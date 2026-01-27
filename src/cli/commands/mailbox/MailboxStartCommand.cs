@@ -441,7 +441,7 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
         try
         {
             using var qrGenerator = new QRCodeGenerator();
-            var qrCodeData = qrGenerator.CreateQrCode(text, QRCodeGenerator.ECCLevel.Q);
+            var qrCodeData = qrGenerator.CreateQrCode(text, QRCodeGenerator.ECCLevel.L);
             var qrCode = new AsciiQRCode(qrCodeData);
             var qrCodeAsAscii = qrCode.GetGraphic(1);
             

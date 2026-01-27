@@ -10,12 +10,13 @@ public class MailboxListener : IMailboxListener
 {
     private HttpListener? _httpListener;
     private readonly CancellationTokenSource _cancellationTokenSource = new();
+    private CancellationTokenSource? _linkedCancellationTokenSource;
     private Task? _listenerTask;
     private bool _disposed = false;
 
     public bool IsListening => _httpListener?.IsListening ?? false;
 
-    public async Task StartAsync(int port, CancellationToken cancellationToken = default)
+    public Task StartAsync(int port, CancellationToken cancellationToken = default)
     {
         if (_httpListener != null && _httpListener.IsListening)
         {
@@ -39,8 +40,11 @@ public class MailboxListener : IMailboxListener
         }
 
         // Start handling requests
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
-        _listenerTask = Task.Run(async () => await ListenAsync(linkedCts.Token), linkedCts.Token);
+        // IMPORTANT: Don't use 'using' here - we need to keep the CancellationTokenSource alive
+        _linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+        _listenerTask = Task.Run(async () => await ListenAsync(_linkedCancellationTokenSource.Token), _linkedCancellationTokenSource.Token);
+        
+        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -51,6 +55,8 @@ public class MailboxListener : IMailboxListener
         }
 
         _cancellationTokenSource.Cancel();
+        _linkedCancellationTokenSource?.Cancel();
+        
         _httpListener.Stop();
         _httpListener.Close();
 
@@ -65,6 +71,9 @@ public class MailboxListener : IMailboxListener
                 // Expected when stopping
             }
         }
+        
+        _linkedCancellationTokenSource?.Dispose();
+        _linkedCancellationTokenSource = null;
     }
 
     private async Task ListenAsync(CancellationToken cancellationToken)
@@ -91,12 +100,19 @@ public class MailboxListener : IMailboxListener
                         catch (Exception ex)
                         {
                             AnsiConsole.MarkupLine($"[red]Error handling request: {ex.Message}[/]");
+                            Console.Out.Flush();
                         }
                     }, cancellationToken);
                 }
                 catch (HttpListenerException ex)
                 {
                     AnsiConsole.MarkupLine($"[red]HttpListener error: {ex.Message}[/]");
+                    Console.Out.Flush();
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Normal shutdown
                     break;
                 }
             }
@@ -104,10 +120,6 @@ public class MailboxListener : IMailboxListener
         catch (OperationCanceledException)
         {
             // Normal shutdown
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Unexpected error in HTTP listener: {ex.Message}[/]");
         }
     }
 
@@ -118,8 +130,6 @@ public class MailboxListener : IMailboxListener
 
         try
         {
-            AnsiConsole.MarkupLine($"[green]→ Incoming request detected![/]");
-
             // Read request body
             string requestBody = string.Empty;
             if (request.HasEntityBody)
@@ -172,6 +182,7 @@ public class MailboxListener : IMailboxListener
 
             AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════[/]");
             AnsiConsole.WriteLine();
+            Console.Out.Flush();
 
             // Handle different endpoints
             var path = request.Url?.AbsolutePath ?? "/";
@@ -207,9 +218,8 @@ public class MailboxListener : IMailboxListener
         }
         catch (Exception ex)
         {
-            // Log the error to console
             AnsiConsole.MarkupLine($"[red]Error processing request: {ex.Message}[/]");
-            AnsiConsole.MarkupLine($"[dim]Stack trace: {ex.StackTrace}[/]");
+            Console.Out.Flush();
 
             try
             {
@@ -236,6 +246,7 @@ public class MailboxListener : IMailboxListener
         }
 
         StopAsync().GetAwaiter().GetResult();
+        _linkedCancellationTokenSource?.Dispose();
         _cancellationTokenSource.Dispose();
         _disposed = true;
     }
