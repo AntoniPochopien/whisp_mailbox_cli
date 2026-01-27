@@ -1,15 +1,20 @@
 public class Mailbox
 {
-    public int Id { get; }
     public string Name { get; }
     public string PINhash { get; }
     public MailboxStatus Status { get; }
 
-    public Mailbox(int id, string name, string PINhash)
+    public Mailbox(string name, string pinhash)
     {
-        Id = id;
         Name = name;
-        this.PINhash = PINhash;
+        PINhash = pinhash;
+        Status = MailboxStatus.Offline;
+    }
+
+    public Mailbox(int id, string name, string pinhash)
+    {
+        Name = name;
+        PINhash = pinhash;
         Status = MailboxStatus.Offline;
     }
 }
