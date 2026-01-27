@@ -1,7 +1,9 @@
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using QRCoder;
 
 public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
 {
@@ -18,11 +20,18 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, MailboxStartSettings settings, CancellationToken cancellationToken)
     {
+        // Default behavior: run as daemon (background). Only run in foreground if explicitly requested.
+        if (!settings.Foreground && !settings.Background)
+        {
+            return await StartAsDaemonAsync(settings, cancellationToken);
+        }
+
         var mailboxEntity = _databaseRepository.GetMailboxByName(settings.Name);
         
         if (mailboxEntity == null)
         {
-            AnsiConsole.MarkupLine($"[red]Mailbox '[white]{settings.Name}[/]' not found.[/]");
+            if (!settings.Background)
+                AnsiConsole.MarkupLine($"[red]Mailbox '[white]{settings.Name}[/]' not found.[/]");
             return 1;
         }
 
@@ -31,8 +40,11 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
         // Find an available port for the local listener
         var localPort = mailbox.Port > 0 ? mailbox.Port : GetAvailablePort();
         
-        AnsiConsole.MarkupLine($"[blue]Starting mailbox:[/] [white]{mailbox.Name}[/]");
-        AnsiConsole.MarkupLine($"[dim]Local port: {localPort}[/]");
+        if (!settings.Background)
+        {
+            AnsiConsole.MarkupLine($"[blue]Starting mailbox:[/] [white]{mailbox.Name}[/]");
+            AnsiConsole.MarkupLine($"[dim]Local port: {localPort}[/]");
+        }
 
         try
         {
@@ -44,6 +56,12 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                 // TOR is not running, check if it's installed
                 if (!_torManager.IsTorInstalled())
                 {
+                    if (settings.Background)
+                    {
+                        // In background mode, we can't prompt, so fail
+                        return 1;
+                    }
+                    
                     AnsiConsole.MarkupLine("[yellow]TOR is not installed on your system.[/]");
                     AnsiConsole.WriteLine();
                     
@@ -79,50 +97,66 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                 }
                 
                 // Start TOR
-                AnsiConsole.MarkupLine("[dim]Starting TOR...[/]");
+                if (!settings.Background)
+                    AnsiConsole.MarkupLine("[dim]Starting TOR...[/]");
                 
-                var started = await AnsiConsole.Status()
-                    .Spinner(Spinner.Known.Dots)
-                    .StartAsync("[yellow]Starting TOR (this may take a minute)...[/]", async ctx =>
-                    {
-                        return await _torManager.StartTorAsync(cancellationToken);
-                    });
+                var started = settings.Background
+                    ? await _torManager.StartTorAsync(cancellationToken)
+                    : await AnsiConsole.Status()
+                        .Spinner(Spinner.Known.Dots)
+                        .StartAsync("[yellow]Starting TOR (this may take a minute)...[/]", async ctx =>
+                        {
+                            return await _torManager.StartTorAsync(cancellationToken);
+                        });
                 
                 if (!started)
                 {
-                    AnsiConsole.MarkupLine("[red]Failed to start TOR.[/]");
+                    if (!settings.Background)
+                        AnsiConsole.MarkupLine("[red]Failed to start TOR.[/]");
                     return 1;
                 }
                 
-                AnsiConsole.MarkupLine("[green]✓ TOR started[/]");
+                if (!settings.Background)
+                    AnsiConsole.MarkupLine("[green]✓ TOR started[/]");
             }
             
             // Connect to TOR control port
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .StartAsync("[yellow]Connecting to TOR...[/]", async ctx =>
-                {
-                    await _torRepository.ConnectAsync(cancellationToken);
-                    await _torRepository.AuthenticateAsync(cancellationToken: cancellationToken);
-                });
+            if (!settings.Background)
+            {
+                await AnsiConsole.Status()
+                    .Spinner(Spinner.Known.Dots)
+                    .StartAsync("[yellow]Connecting to TOR...[/]", async ctx =>
+                    {
+                        await _torRepository.ConnectAsync(cancellationToken);
+                        await _torRepository.AuthenticateAsync(cancellationToken: cancellationToken);
+                    });
+            }
+            else
+            {
+                await _torRepository.ConnectAsync(cancellationToken);
+                await _torRepository.AuthenticateAsync(cancellationToken: cancellationToken);
+            }
 
             HiddenService hiddenService;
 
             if (mailbox.HasHiddenService)
             {
                 // Reuse existing hidden service (same .onion address)
-                AnsiConsole.MarkupLine("[dim]Attaching existing hidden service...[/]");
+                if (!settings.Background)
+                    AnsiConsole.MarkupLine("[dim]Attaching existing hidden service...[/]");
                 hiddenService = await _torRepository.AttachHiddenServiceAsync(
                     mailbox.OnionPrivateKey!, 
                     localPort, 
                     settings.VirtualPort);
                 
-                AnsiConsole.MarkupLine($"[green]✓ Hidden service reattached[/]");
+                if (!settings.Background)
+                    AnsiConsole.MarkupLine($"[green]✓ Hidden service reattached[/]");
             }
             else
             {
                 // Create new hidden service
-                AnsiConsole.MarkupLine("[dim]Creating new hidden service...[/]");
+                if (!settings.Background)
+                    AnsiConsole.MarkupLine("[dim]Creating new hidden service...[/]");
                 hiddenService = await _torRepository.CreateHiddenServiceAsync(localPort, settings.VirtualPort);
                 
                 // Save the private key for future restarts
@@ -131,36 +165,57 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                     hiddenService.PrivateKey, 
                     hiddenService.OnionAddress);
                 
-                AnsiConsole.MarkupLine($"[green]✓ Hidden service created and saved[/]");
+                if (!settings.Background)
+                    AnsiConsole.MarkupLine($"[green]✓ Hidden service created and saved[/]");
             }
 
-            // Display the onion address
-            AnsiConsole.WriteLine();
-            var panel = new Panel($"[bold cyan]{hiddenService.FullOnionAddress}:{settings.VirtualPort}[/]")
+            // Display the onion address (without port)
+            var onionAddress = hiddenService.FullOnionAddress;
+            
+            if (!settings.Background)
             {
-                Header = new PanelHeader("[green]Your Onion Address[/]"),
-                Border = BoxBorder.Rounded,
-                Padding = new Padding(2, 1)
-            };
-            AnsiConsole.Write(panel);
-            AnsiConsole.WriteLine();
+                AnsiConsole.WriteLine();
+                var panel = new Panel($"[bold cyan]{onionAddress}[/]")
+                {
+                    Header = new PanelHeader("[green]Your Onion Address[/]"),
+                    Border = BoxBorder.Rounded,
+                    Padding = new Padding(2, 1)
+                };
+                AnsiConsole.Write(panel);
+                AnsiConsole.WriteLine();
 
-            AnsiConsole.MarkupLine("[yellow]Press Ctrl+C to stop the mailbox[/]");
-            AnsiConsole.WriteLine();
+                // Display QR code
+                DisplayQrCode(onionAddress);
+
+                AnsiConsole.MarkupLine("[yellow]Press Ctrl+C to stop the mailbox[/]");
+                AnsiConsole.WriteLine();
+            }
+            else
+            {
+                // In background mode, write PID file
+                await WritePidFileAsync(settings.Name);
+            }
 
             // Start a simple listener to keep the service running
             using var listener = new TcpListener(IPAddress.Loopback, localPort);
             listener.Start();
             
-            AnsiConsole.MarkupLine($"[green]✓ Mailbox '[white]{mailbox.Name}[/]' is now online[/]");
+            if (!settings.Background)
+            {
+                AnsiConsole.MarkupLine($"[green]✓ Mailbox '[white]{mailbox.Name}[/]' is now online[/]");
+            }
 
             // Keep running until cancelled (use linked token for Ctrl+C support)
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            Console.CancelKeyPress += (_, e) =>
+            
+            if (!settings.Background)
             {
-                e.Cancel = true;
-                cts.Cancel();
-            };
+                Console.CancelKeyPress += (_, e) =>
+                {
+                    e.Cancel = true;
+                    cts.Cancel();
+                };
+            }
 
             try
             {
@@ -170,7 +225,8 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                     if (listener.Pending())
                     {
                         var client = await listener.AcceptTcpClientAsync(cts.Token);
-                        AnsiConsole.MarkupLine($"[cyan]→ Incoming connection[/]");
+                        if (!settings.Background)
+                            AnsiConsole.MarkupLine($"[cyan]→ Incoming connection[/]");
                         // For now, just close the connection - you can add message handling here
                         client.Close();
                     }
@@ -182,13 +238,25 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
                 // Normal shutdown
             }
 
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[yellow]Shutting down...[/]");
+            if (!settings.Background)
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine("[yellow]Shutting down...[/]");
+            }
             
             // Remove the hidden service from TOR (it will be reattached on next start)
             await _torRepository.RemoveHiddenServiceAsync(hiddenService.OnionAddress);
             
-            AnsiConsole.MarkupLine($"[green]✓ Mailbox '[white]{mailbox.Name}[/]' stopped[/]");
+            // Clean up PID file
+            if (settings.Background)
+            {
+                DeletePidFile(settings.Name);
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[green]✓ Mailbox '[white]{mailbox.Name}[/]' stopped[/]");
+            }
+            
             return 0;
         }
         catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionRefused)
@@ -212,5 +280,164 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private async Task<int> StartAsDaemonAsync(MailboxStartSettings settings, CancellationToken cancellationToken)
+    {
+        var exePath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exePath))
+        {
+            AnsiConsole.MarkupLine("[red]Cannot determine executable path[/]");
+            return 1;
+        }
+
+        // Build arguments for background process
+        var args = new List<string>
+        {
+            "mailbox",
+            "start",
+            settings.Name,
+            "--port",
+            settings.VirtualPort.ToString(),
+            "--background"
+        };
+
+        var processStartInfo = new ProcessStartInfo
+        {
+            FileName = exePath,
+            Arguments = string.Join(" ", args),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+
+        try
+        {
+            var process = Process.Start(processStartInfo);
+            if (process == null)
+            {
+                AnsiConsole.MarkupLine("[red]Failed to start background process[/]");
+                return 1;
+            }
+
+            // Wait a moment to see if it starts successfully
+            await Task.Delay(2000, cancellationToken);
+
+            // Check if process is still running
+            if (process.HasExited)
+            {
+                AnsiConsole.MarkupLine("[red]Background process exited immediately. Check for errors.[/]");
+                return 1;
+            }
+
+            // Check if PID file was created
+            var pidFile = GetPidFilePath(settings.Name);
+            if (File.Exists(pidFile))
+            {
+                var pid = File.ReadAllText(pidFile).Trim();
+                AnsiConsole.MarkupLine($"[green]✓ Mailbox '[white]{settings.Name}[/]' started in background (PID: {pid})[/]");
+                
+                // Wait a bit for the mailbox to initialize and get the onion address
+                await Task.Delay(3000, cancellationToken);
+                
+                // Get the mailbox to retrieve the onion address
+                var mailboxEntity = _databaseRepository.GetMailboxByName(settings.Name);
+                if (mailboxEntity != null && mailboxEntity.Entity.HasHiddenService)
+                {
+                    var onionAddress = mailboxEntity.Entity.FullOnionAddress;
+                    if (!string.IsNullOrEmpty(onionAddress))
+                    {
+                        AnsiConsole.WriteLine();
+                        var panel = new Panel($"[bold cyan]{onionAddress}[/]")
+                        {
+                            Header = new PanelHeader("[green]Your Onion Address[/]"),
+                            Border = BoxBorder.Rounded,
+                            Padding = new Padding(2, 1)
+                        };
+                        AnsiConsole.Write(panel);
+                        AnsiConsole.WriteLine();
+                        
+                        // Display QR code
+                        DisplayQrCode(onionAddress);
+                    }
+                }
+                
+                AnsiConsole.MarkupLine($"[dim]Use 'mailbox stop {settings.Name}' to stop it[/]");
+                return 0;
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Background process started but PID file not found. Process may still be initializing.[/]");
+                return 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error starting daemon: {ex.Message}[/]");
+            return 1;
+        }
+    }
+
+    private static async Task WritePidFileAsync(string mailboxName)
+    {
+        var pidFile = GetPidFilePath(mailboxName);
+        var pidDir = Path.GetDirectoryName(pidFile);
+        if (!string.IsNullOrEmpty(pidDir))
+        {
+            Directory.CreateDirectory(pidDir);
+        }
+        await File.WriteAllTextAsync(pidFile, Environment.ProcessId.ToString());
+    }
+
+    private static void DeletePidFile(string mailboxName)
+    {
+        var pidFile = GetPidFilePath(mailboxName);
+        if (File.Exists(pidFile))
+        {
+            try
+            {
+                File.Delete(pidFile);
+            }
+            catch
+            {
+                // Ignore errors when deleting PID file
+            }
+        }
+    }
+
+    private static string GetPidFilePath(string mailboxName)
+    {
+        var appDataPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "whisp_mailbox");
+        
+        Directory.CreateDirectory(appDataPath);
+        return Path.Combine(appDataPath, $"mailbox_{mailboxName}.pid");
+    }
+
+    private static void DisplayQrCode(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+            
+        try
+        {
+            using var qrGenerator = new QRCodeGenerator();
+            var qrCodeData = qrGenerator.CreateQrCode(text, QRCodeGenerator.ECCLevel.Q);
+            var qrCode = new AsciiQRCode(qrCodeData);
+            var qrCodeAsAscii = qrCode.GetGraphic(1);
+            
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]QR Code:[/]");
+            AnsiConsole.WriteLine(qrCodeAsAscii);
+            AnsiConsole.WriteLine();
+        }
+        catch (Exception ex)
+        {
+            // If QR code generation fails, just skip it
+            AnsiConsole.MarkupLine($"[dim]Could not generate QR code: {ex.Message}[/]");
+        }
     }
 }

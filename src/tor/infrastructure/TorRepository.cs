@@ -51,7 +51,6 @@ public class TorRepository : ITorRepository
     {
         EnsureConnected();
 
-        // ADD_ONION NEW:ED25519-V3 Port=virtualPort,127.0.0.1:localPort
         var command = $"ADD_ONION NEW:ED25519-V3 Port={virtualPort},127.0.0.1:{localPort}";
         await SendCommandAsync(command, cancellationToken);
 
@@ -62,7 +61,6 @@ public class TorRepository : ITorRepository
     {
         EnsureConnected();
 
-        // ADD_ONION ED25519-V3:privateKey Port=virtualPort,127.0.0.1:localPort
         var command = $"ADD_ONION {privateKey} Port={virtualPort},127.0.0.1:{localPort}";
         await SendCommandAsync(command, cancellationToken);
 
@@ -73,7 +71,6 @@ public class TorRepository : ITorRepository
     {
         EnsureConnected();
 
-        // Remove .onion suffix if present
         var serviceId = onionAddress.Replace(".onion", "");
         var command = $"DEL_ONION {serviceId}";
         await SendCommandAsync(command, cancellationToken);
@@ -90,7 +87,6 @@ public class TorRepository : ITorRepository
         string? serviceId = null;
         string? privateKey = null;
 
-        // Read multiline response
         while (true)
         {
             var line = await _reader!.ReadLineAsync(cancellationToken);
@@ -106,7 +102,6 @@ public class TorRepository : ITorRepository
             }
             else if (line.StartsWith("250 "))
             {
-                // End of response
                 break;
             }
             else if (line.StartsWith("5"))
@@ -120,7 +115,6 @@ public class TorRepository : ITorRepository
             throw new InvalidOperationException("Failed to get service ID from TOR response");
         }
 
-        // If we're attaching an existing service, we won't get a new private key
         privateKey ??= "EXISTING";
 
         return new HiddenService(serviceId, privateKey, localPort, virtualPort);
