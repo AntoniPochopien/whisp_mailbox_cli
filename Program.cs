@@ -132,7 +132,7 @@ static int GetAvailablePort()
        return port;
 }
 
-static string GeneratePassword(int length = 8)
+static string GeneratePassword(int length = 6)
 {
        const string digits = "0123456789";
        return string.Create(length, digits, (span, d) =>
