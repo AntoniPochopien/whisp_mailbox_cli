@@ -26,7 +26,6 @@ public class MailboxListener
             throw new InvalidOperationException("Listener is already running");
 
         _httpListener = new HttpListener();
-        _httpListener.Prefixes.Add($"http://localhost:{port}/");
         _httpListener.Prefixes.Add($"http://127.0.0.1:{port}/");
         _httpListener.Start();
 
@@ -114,19 +113,23 @@ public class MailboxListener
                     }
                     break;
 
-                case "/invite":
-                    if (string.IsNullOrEmpty(body))
-                    {
-                        response.StatusCode = 400;
-                        responseBody = JsonSerializer.Serialize(new { status = "error", message = "empty body" });
-                    }
-                    else
-                    {
-                        _db.AddMessage("/invite", body);
-                        response.StatusCode = 200;
-                        responseBody = JsonSerializer.Serialize(new { status = "ok", message = "invite stored" });
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Invite stored ({body.Length} bytes)");
-                    }
+                // case "/invite":
+                //     if (string.IsNullOrEmpty(body))
+                //     {
+                //         response.StatusCode = 400;
+                //         responseBody = JsonSerializer.Serialize(new { status = "error", message = "empty body" });
+                //     }
+                //     else
+                //     {
+                //         _db.AddMessage("/invite", body);
+                //         response.StatusCode = 200;
+                //         responseBody = JsonSerializer.Serialize(new { status = "ok", message = "invite stored" });
+                //         Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Invite stored ({body.Length} bytes)");
+                //     }
+                //     break;
+
+                case "/pair":
+                    (response.StatusCode, responseBody) = HandlePair(body);
                     break;
 
                 case "/pull":
@@ -160,9 +163,38 @@ public class MailboxListener
         }
     }
 
+    private (int statusCode, string body) HandlePair(string body)
+    {
+        if (string.IsNullOrEmpty(body))
+            return (400, JsonSerializer.Serialize(new { success = false, message = "body required" }));
+
+        try
+        {
+            var doc = JsonDocument.Parse(body);
+            var pin = doc.RootElement.GetProperty("pin").GetString();
+
+            if (string.IsNullOrEmpty(pin))
+                return (400, JsonSerializer.Serialize(new { success = false, message = "pin required" }));
+
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(pin)));
+            if (hash != _pinHash)
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Failed pair attempt (invalid PIN)");
+                return (403, JsonSerializer.Serialize(new { success = false, message = "invalid pin" }));
+            }
+
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Client paired successfully");
+            return (200, JsonSerializer.Serialize(new { success = true }));
+        }
+        catch (Exception)
+        {
+            return (400, JsonSerializer.Serialize(new { success = false, message = "invalid JSON, expected {\"pin\":\"...\"}" }));
+        }
+    }
+
     private (int statusCode, string body) HandlePull(HttpListenerRequest request)
     {
-        var pin = request.Headers["X-PIN"] ?? request.QueryString["pin"];
+        var pin = request.QueryString["pin"];
 
         if (string.IsNullOrEmpty(pin))
             return (401, JsonSerializer.Serialize(new { status = "error", message = "PIN required" }));
