@@ -53,9 +53,9 @@ var onionAddress = hiddenService.FullOnionAddress;
 DisplayQrCode(onionAddress);
 
 Console.WriteLine();
-Console.WriteLine("╔═══════════════════════════════════════════════════════════════════╗");
+Console.WriteLine("╔════════════════════════════════════════════════════════════════════════════════════╗");
 Console.WriteLine($"  Your Onion Address: {onionAddress}");
-Console.WriteLine("╚═══════════════════════════════════════════════════════════════════╝");
+Console.WriteLine("╚════════════════════════════════════════════════════════════════════════════════════╝");
 Console.WriteLine();
 
 // --- Password: generate on first run, reuse hash on subsequent runs ---
