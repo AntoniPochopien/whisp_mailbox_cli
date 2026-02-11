@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Spectre.Console;
@@ -8,19 +10,40 @@ using Spectre.Console;
 /// </summary>
 public class MailboxListener : IMailboxListener
 {
+    private readonly IDatabaseRepository _databaseRepository;
+    private readonly ConcurrentBag<MailboxMessage> _messageCache = new();
+    
     private HttpListener? _httpListener;
     private readonly CancellationTokenSource _cancellationTokenSource = new();
     private CancellationTokenSource? _linkedCancellationTokenSource;
     private Task? _listenerTask;
     private bool _disposed = false;
+    
+    private int _mailboxId;
+    private string _pinHash = string.Empty;
 
     public bool IsListening => _httpListener?.IsListening ?? false;
 
-    public Task StartAsync(int port, CancellationToken cancellationToken = default)
+    public MailboxListener(IDatabaseRepository databaseRepository)
+    {
+        _databaseRepository = databaseRepository;
+    }
+
+    public Task StartAsync(int port, int mailboxId, string pinHash, CancellationToken cancellationToken = default)
     {
         if (_httpListener != null && _httpListener.IsListening)
         {
             throw new InvalidOperationException("Listener is already running");
+        }
+
+        _mailboxId = mailboxId;
+        _pinHash = pinHash;
+
+        // Load existing messages from database into cache
+        var existingMessages = _databaseRepository.GetMessagesByMailboxId(mailboxId);
+        foreach (var msg in existingMessages)
+        {
+            _messageCache.Add(msg.Entity);
         }
 
         _httpListener = new HttpListener();
@@ -40,7 +63,6 @@ public class MailboxListener : IMailboxListener
         }
 
         // Start handling requests
-        // IMPORTANT: Don't use 'using' here - we need to keep the CancellationTokenSource alive
         _linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
         _listenerTask = Task.Run(async () => await ListenAsync(_linkedCancellationTokenSource.Token), _linkedCancellationTokenSource.Token);
         
@@ -123,7 +145,7 @@ public class MailboxListener : IMailboxListener
         }
     }
 
-    private static async Task HandleRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
+    private async Task HandleRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
         var request = context.Request;
         var response = context.Response;
@@ -197,11 +219,19 @@ public class MailboxListener : IMailboxListener
                     break;
 
                 case "/invite":
+                    StoreMessage("/invite", requestBody);
                     responseBody = JsonSerializer.Serialize(new { status = "ok", message = "invite received", timestamp = DateTime.UtcNow });
+                    AnsiConsole.MarkupLine("[green]✓ Invite stored[/]");
                     break;
 
                 case "/message":
+                    StoreMessage("/message", requestBody);
                     responseBody = JsonSerializer.Serialize(new { status = "ok", message = "message received", timestamp = DateTime.UtcNow });
+                    AnsiConsole.MarkupLine("[green]✓ Message stored[/]");
+                    break;
+
+                case "/pull":
+                    (response.StatusCode, responseBody) = HandlePullRequest(request);
                     break;
 
                 default:
@@ -238,6 +268,83 @@ public class MailboxListener : IMailboxListener
         }
     }
 
+    private void StoreMessage(string endpoint, string body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            return;
+        }
+
+        var message = new MailboxMessage(_mailboxId, endpoint, body);
+        
+        // Store in memory cache
+        _messageCache.Add(message);
+        
+        // Store in database
+        _databaseRepository.AddMessage(message);
+    }
+
+    private (int statusCode, string responseBody) HandlePullRequest(HttpListenerRequest request)
+    {
+        // Get PIN from header or query string
+        var pin = request.Headers["X-PIN"] ?? request.QueryString["pin"];
+
+        if (string.IsNullOrEmpty(pin))
+        {
+            return (401, JsonSerializer.Serialize(new { status = "error", message = "PIN required" }));
+        }
+
+        // Hash the provided PIN and compare
+        var providedPinHash = HashPin(pin);
+        if (providedPinHash != _pinHash)
+        {
+            AnsiConsole.MarkupLine("[red]✗ Invalid PIN provided for pull request[/]");
+            return (403, JsonSerializer.Serialize(new { status = "error", message = "Invalid PIN" }));
+        }
+
+        // Get all messages
+        var messages = _messageCache.ToArray();
+        
+        if (messages.Length == 0)
+        {
+            return (200, JsonSerializer.Serialize(new { status = "ok", messages = Array.Empty<object>(), count = 0 }));
+        }
+
+        // Build response with messages
+        var messageList = messages.Select(m => new
+        {
+            endpoint = m.Endpoint,
+            body = TryParseJson(m.Body),
+            received_at = m.ReceivedAt
+        }).ToArray();
+
+        // Clear messages from database and memory
+        _databaseRepository.DeleteMessagesByMailboxId(_mailboxId);
+        _messageCache.Clear();
+
+        AnsiConsole.MarkupLine($"[green]✓ Pulled {messages.Length} message(s)[/]");
+
+        return (200, JsonSerializer.Serialize(new { status = "ok", messages = messageList, count = messages.Length }));
+    }
+
+    private static object TryParseJson(string body)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(body);
+        }
+        catch
+        {
+            return body;
+        }
+    }
+
+    private static string HashPin(string pin)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(pin));
+        return Convert.ToHexString(bytes);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -251,4 +358,3 @@ public class MailboxListener : IMailboxListener
         _disposed = true;
     }
 }
-

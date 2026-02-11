@@ -210,7 +210,7 @@ public class MailboxStartCommand : AsyncCommand<MailboxStartSettings>
             // Start HTTP listener service
             try
             {
-                await _mailboxListener.StartAsync(localPort, cancellationToken);
+                await _mailboxListener.StartAsync(localPort, mailboxEntity.Id, mailbox.PINhash, cancellationToken);
             }
             catch (Exception ex)
             {

@@ -29,6 +29,19 @@ public class DatabaseRepository : IDatabaseRepository
         MigrateAddColumn("port", "INTEGER NOT NULL DEFAULT 0");
         MigrateAddColumn("onion_private_key", "TEXT");
         MigrateAddColumn("onion_address", "TEXT");
+
+        // Create messages table
+        var createMessagesTableCommand = _Connection.CreateCommand();
+        createMessagesTableCommand.CommandText = @"
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                mailbox_id INTEGER NOT NULL,
+                endpoint TEXT NOT NULL,
+                body TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                FOREIGN KEY (mailbox_id) REFERENCES mailboxes(id) ON DELETE CASCADE
+            )";
+        createMessagesTableCommand.ExecuteNonQuery();
     }
 
     private void MigrateAddColumn(string columnName, string columnDef)
@@ -159,5 +172,62 @@ public class DatabaseRepository : IDatabaseRepository
 
         var mailbox = new Mailbox(id, name, pinhash, port, onionPrivateKey, onionAddress);
         return new DbEntity<Mailbox>(id, mailbox);
+    }
+
+    // Message storage methods
+    public override DbEntity<MailboxMessage> AddMessage(MailboxMessage message)
+    {
+        var insertCommand = _Connection.CreateCommand();
+        insertCommand.CommandText = @"
+            INSERT INTO messages (mailbox_id, endpoint, body, received_at) 
+            VALUES (@mailbox_id, @endpoint, @body, @received_at);
+            SELECT last_insert_rowid();";
+        insertCommand.Parameters.AddWithValue("@mailbox_id", message.MailboxId);
+        insertCommand.Parameters.AddWithValue("@endpoint", message.Endpoint);
+        insertCommand.Parameters.AddWithValue("@body", message.Body);
+        insertCommand.Parameters.AddWithValue("@received_at", message.ReceivedAt.ToString("O"));
+        
+        var id = Convert.ToInt32(insertCommand.ExecuteScalar());
+        return new DbEntity<MailboxMessage>(id, message);
+    }
+
+    public override List<DbEntity<MailboxMessage>> GetMessagesByMailboxId(int mailboxId)
+    {
+        var messages = new List<DbEntity<MailboxMessage>>();
+
+        var selectCommand = _Connection.CreateCommand();
+        selectCommand.CommandText = "SELECT id, mailbox_id, endpoint, body, received_at FROM messages WHERE mailbox_id = @mailbox_id ORDER BY received_at ASC";
+        selectCommand.Parameters.AddWithValue("@mailbox_id", mailboxId);
+
+        using (var reader = selectCommand.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var message = ReadMessageFromReader(reader);
+                messages.Add(message);
+            }
+        }
+
+        return messages;
+    }
+
+    public override void DeleteMessagesByMailboxId(int mailboxId)
+    {
+        var deleteCommand = _Connection.CreateCommand();
+        deleteCommand.CommandText = "DELETE FROM messages WHERE mailbox_id = @mailbox_id";
+        deleteCommand.Parameters.AddWithValue("@mailbox_id", mailboxId);
+        deleteCommand.ExecuteNonQuery();
+    }
+
+    private static DbEntity<MailboxMessage> ReadMessageFromReader(SqliteDataReader reader)
+    {
+        var id = reader.GetInt32(0);
+        var mailboxId = reader.GetInt32(1);
+        var endpoint = reader.GetString(2);
+        var body = reader.GetString(3);
+        var receivedAt = DateTime.Parse(reader.GetString(4));
+
+        var message = new MailboxMessage(mailboxId, endpoint, body, receivedAt);
+        return new DbEntity<MailboxMessage>(id, message);
     }
 }

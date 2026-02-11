@@ -3,7 +3,14 @@
 /// </summary>
 public interface IMailboxListener : IDisposable
 {
-    Task StartAsync(int port, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Starts the HTTP listener for the specified mailbox
+    /// </summary>
+    /// <param name="port">Local port to listen on</param>
+    /// <param name="mailboxId">Database ID of the mailbox</param>
+    /// <param name="pinHash">Hashed PIN for authentication</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task StartAsync(int port, int mailboxId, string pinHash, CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);
     bool IsListening { get; }
 }
